@@ -4,7 +4,8 @@ Reverse-engineered from the 怡口智控 WeChat mini-program API
 (iot2.chinaecowater.com) using Charles Proxy.
 
 Device: V80ECM (modelCode: 000400)
-15 sensors covering flow, volume, regeneration status, and hardness.
+9 sensors covering flow, volume, regeneration status, and hardness.
+Plus 1 button for triggering regeneration.
 """
 import logging
 import aiohttp
@@ -28,27 +29,30 @@ SCAN_INTERVAL = timedelta(minutes=5)
 
 # ── Confirmed data fields ──────────────────────────────────
 # Mapped via Charles Proxy + WeChat mini-program screenshot cross-reference.
+# Unconfirmed (inference-only) fields are commented out — see README.md.
 # See README.md for full field documentation.
 DATA_FIELDS: dict[str, tuple[str, str | None, str]] = {
-    # --- Directly visible in mini-program ---
+    # --- Directly visible in mini-program (confirmed) ---
     "data0A": ("Instant Flow Rate", "L/min", "mdi:water"),
     "data25": ("Regeneration Count", "times", "mdi:counter"),
     "data2C": ("Available Soft Water", "L", "mdi:water-check"),
-    # --- Regeneration tracking ---
+    # --- Regeneration tracking (confirmed via full-cycle capture) ---
     "data08": ("Regeneration Active", None, "mdi:sync"),
     "data24": ("Regeneration Stage", None, "mdi:swap-horizontal"),
     "data22": ("Segment Water Use", "L", "mdi:water-plus"),
     "data23": ("Segment Count", None, "mdi:numeric"),
-    # --- Cumulative / history ---
+    # --- Cumulative (confirmed via continuous tracking) ---
     "data28": ("Cumulative Water Use", "L", "mdi:water-pump"),
-    "data29": ("Daily Avg Water Use", "L", "mdi:water-percent"),
-    "data13": ("Total Water Use", "L", "mdi:counter"),
-    # --- Device status ---
-    "data00": ("Device Status", None, "mdi:information"),
-    "data0F": ("Online", None, "mdi:wifi"),
-    "data2B": ("Salt Remaining Days", "days", "mdi:calendar-clock"),
+    # --- Settings (confirmed via config comparison) ---
     "data5A": ("Inlet Hardness", None, "mdi:water-opacity"),
-    "data60": ("Signal Strength", "dBm", "mdi:signal"),
+
+    # ═══ Unconfirmed / inference-only fields (commented out) ═══
+    # "data29": ("Daily Avg Water Use", "L", "mdi:water-percent"),
+    # "data13": ("Total Water Use", "L", "mdi:counter"),
+    # "data00": ("Device Status", None, "mdi:information"),
+    # "data0F": ("Online", None, "mdi:wifi"),
+    # "data2B": ("Salt Remaining Days", "days", "mdi:calendar-clock"),
+    # "data60": ("Signal Strength", "dBm", "mdi:signal"),
 }
 
 
