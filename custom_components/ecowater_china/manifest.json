@@ -1,9 +1,9 @@
 {
   "domain": "ecowater_china",
   "name": "Ecowater China (怡口智控)",
-  "codeowners": ["@YangXuran"],
+  "codeowners": ["@xuran"],
   "config_flow": true,
-  "documentation": "https://github.com/YangXuran/ecowater-china-ha",
+  "documentation": "",
   "iot_class": "cloud_polling",
   "requirements": ["aiohttp"],
   "version": "1.0.0"

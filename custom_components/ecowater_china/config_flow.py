@@ -3,7 +3,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_CUSTOMER_ID, CONF_PHONE_NUMBER
+from .const import DOMAIN, CONF_CUSTOMER_ID, CONF_PHONE_NUMBER, CONF_OPENID
 
 
 class EcowaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -15,7 +15,7 @@ class EcowaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             return self.async_create_entry(
-                title="Ecowater V80ECM",
+                title="怡口 V80ECM",
                 data=user_input,
             )
 
@@ -23,7 +23,9 @@ class EcowaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema({
                 vol.Required(CONF_PHONE_NUMBER): str,
-                vol.Required(CONF_CUSTOMER_ID): str,
+                vol.Required(CONF_OPENID): str,
+                vol.Optional(CONF_CUSTOMER_ID, default=""): str,
+                vol.Optional("device_mac", default=""): str,
             }),
             errors=errors,
         )

@@ -2,5 +2,6 @@
 DOMAIN = "ecowater_china"
 CONF_CUSTOMER_ID = "customer_id"
 CONF_PHONE_NUMBER = "phone_number"
+CONF_OPENID = "openid"
 
 API_BASE = "https://iot2.chinaecowater.com"

@@ -9,11 +9,11 @@ Reverse-engineered Home Assistant custom integration for **Ecowater (怡口) V80
 
 ## Features
 
-- 🌊 **15 sensors** — flow rate, water volume, regeneration status, hardness, signal strength
+- 🌊 **9 sensors** — flow rate, water volume, regeneration status, hardness
 - 🔄 **Regeneration tracking** — real-time stage monitoring (backwash → brine draw → rinse)
 - 📊 **Daily statistics** — daily water usage and averages
-- ⚡ **Remote regeneration trigger** (one command away — PR welcome!)
-- 🔐 **Charles Proxy-free running** — once `customer_id` is obtained, no proxy needed
+- ⚡ **Regeneration button** — trigger immediate regeneration from HA dashboard
+- 🔁 **Auto-refresh auth** — customer_id expires? No problem. openid-based automatic renewal
 
 ## Installation
 
@@ -34,16 +34,20 @@ git clone https://github.com/YangXuran/ecowater-china-ha.git ecowater_china
 
 ## Configuration
 
-The integration requires two values:
+The integration requires three values:
 
-| Field | Description |
-|-------|-------------|
-| **Phone Number** | The phone number used to log into the 怡口智控 WeChat mini-program |
-| **Customer ID** | A permanent UUID-like token assigned by Ecowater's backend |
+| Field | Required | Description |
+|-------|----------|-------------|
+| **Phone Number** | Yes | The phone number used to log into the 怡口智控 WeChat mini-program |
+| **OpenID** | Yes | Stable WeChat account identifier (capture once, never changes) |
+| **Customer ID** | No | Session token — leave blank to auto-fetch, or pre-fill if known |
 
-### 🔑 How to get your `customer_id`
+### 🔑 How to get your `openid` and `customer_id`
 
-The `customer_id` is a **permanent identifier** assigned to your Ecowater account. It never changes. You only need to capture it once.
+The **openid** is a **permanent identifier** bound to your WeChat account. It never changes.
+The **customer_id** is a **session token** that expires periodically. But don't worry — the integration will auto-refresh it using your openid.
+
+You only need to capture the openid **once**.
 
 #### Method 1: Charles Proxy (macOS / Windows)
 
@@ -64,37 +68,34 @@ This is the method used to reverse-engineer this integration.
    - Set phone WiFi proxy to your Mac's IP, port `8888`
    - Charles will prompt — click **Allow**
 
-5. **Capture the `customer_id`:**
+5. **Capture the `openid` (most important!):**
    - Open WeChat → 怡口智控 mini-program → Log in with your phone
    - In Charles, look for requests to `iot2.chinaecowater.com`
-   - Find any authenticated request (e.g. `cusDevListByMC3`)
-   - In the **Request Headers**, find: `ewtoken: customer{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`
-   - The part after `customer` is your `customer_id`
+   - Find the request to **`POST /api/applets/customer/openid`**
+   - In the **Response**, you'll see:
+     ```json
+     {"openid": "oavuI5KYxxxxxxxxxxxxxxxxxxxxx", "session_key": "..."}
+     ```
+   - Copy the `openid` value — this is what you'll enter in HA
+
+6. **Capture the `customer_id` (optional — the integration can auto-fetch it):**
+   - Find the request to **`POST /api/applets/customer/getCustomer`**
+   - In the **Response**, you'll see:
+     ```json
+     {"data": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "resCode": "0", "resMsg": "ok"}
+     ```
+   - The `data` field is your current `customer_id`
+   - Alternatively, check any authenticated request header: `ewtoken: customer<customer_id>`
+
+> 💡 **You only need the openid.** The integration uses `getCustomer` to fetch a fresh customer_id whenever the old one expires. If you want to pre-fill a customer_id, grab it from the `ewtoken` header of any authenticated request.
 
 ```
-Example header:
-  ewtoken: customerxxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-                            This is your customer_id
+Capture checklist:
+  [✓] POST /api/applets/customer/openid → response → openid (PERMANENT)
+  [✓] POST /api/applets/customer/getCustomer → response → data (customer_id, ephemeral)
+
+Hint: in Charles, filter by "openid" to find both requests quickly.
 ```
-
-#### Method 2: mitmproxy (Cross-platform, Free)
-
-```bash
-# Install
-pip install mitmproxy
-
-# Start proxy
-mitmweb --listen-port 8888
-
-# Then follow similar steps as Charles (install cert, route phone traffic)
-```
-
-#### Method 3: Stream / Packet Capture (Android only)
-
-On Android, apps like **HttpCanary** or **Packet Capture** can capture SSL traffic from WeChat without root. Install the certificate, filter `chinaecowater.com`, and copy the `ewtoken` header value.
-
-> **Once captured, your `customer_id` never expires.** You can uninstall the proxy after this step.
 
 ---
 
@@ -111,6 +112,8 @@ ewtoken: customer{your_customer_id}
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/api/applets/customer/openid` | POST | WeChat code → openid + session_key |
+| `/api/applets/customer/getCustomer` | POST | openid → customer_id (no auth needed!) |
 | `/api/applets/cusDev/cusDevListByMC3` | POST | Device real-time data (all `dataXX` fields) |
 | `/api/applets/cusDev/cusDevListByMC3New` | POST | Newer device data endpoint (more fields) |
 | `/api/app/statiscal/observe/daily` | POST | Today's hourly water usage breakdown |
@@ -118,8 +121,20 @@ ewtoken: customer{your_customer_id}
 | `/api/applets/model/cusLoadConifgsByMac` | GET | Device configuration (hex-encoded) |
 | `/api/applets/device/control` | POST | Device control (trigger regeneration) |
 | `/api/applets/cusDevFault/list` | POST | Fault/error logs |
-| `/api/applets/customer/getCustomer` | POST | Convert openid → customer_id |
-| `/api/applets/customer/openid` | POST | Convert WeChat code → openid |
+
+### Auth Flow
+
+```
+WeChat mini-program wx.login()
+  ↓ code
+POST /api/applets/customer/openid  {code: ...}
+  ↓ openid + session_key
+POST /api/applets/customer/getCustomer  {openid: ...}   ← no ewtoken required!
+  ↓ customer_id
+All subsequent requests: Header ewtoken: customer{customer_id}
+```
+
+> **Key insight:** `getCustomer` does NOT require authentication. As long as you have the openid, you can get a fresh customer_id anytime. This is how the auto-refresh works.
 
 ### Device State Request
 
@@ -138,7 +153,7 @@ Response returns an array of devices with `data00` through `data75` fields.
 
 ## Data Field Mapping
 
-### ✅ Confirmed Fields (15 sensors implemented)
+### ✅ Confirmed Fields (9 sensors implemented)
 
 | Field | Sensor Name | Unit | How Confirmed | Notes |
 |-------|-------------|------|---------------|-------|
@@ -150,13 +165,20 @@ Response returns an array of devices with `data00` through `data75` fields.
 | `data22` | Segment Water Use | L | Regeneration tracking | Resets each regeneration cycle |
 | `data23` | Segment Count | — | Regeneration tracking | Resets each regeneration cycle |
 | `data28` | Cumulative Water Use | L | Continuous tracking | Monotonic increase |
-| `data29` | Daily Avg Water Use | L | Calculated inference | May be server-side calculation |
-| `data13` | Total Water Use | L | Inference | Likely lifetime total |
-| `data00` | Device Status | — | Inference | `255` = normal |
-| `data0F` | Online | — | Inference | `1` = online |
-| `data2B` | Salt Remaining Days | days | Inference | Estimated from salt level sensor |
 | `data5A` | Inlet Hardness | — | Config comparison | Raw value × 10 = display (17 → 170) |
-| `data60` | Signal Strength | dBm | Inference | WiFi/4G signal quality |
+
+### 🔒 Hidden Fields (6 sensors — unconfirmed, commented out)
+
+These fields exist in the API response but are **not** exposed as sensors because their values haven't been verified against the mini-program display. You can uncomment them in `custom_components/ecowater_china/sensor.py` if you want to experiment.
+
+| Field | Suspicion | Why Hidden |
+|-------|-----------|------------|
+| `data00` | Device status (255=normal) | Inference only, not confirmed |
+| `data0F` | Online status | Inference only |
+| `data13` | Total water use | Unknown unit/accuracy |
+| `data29` | Daily avg water use | May be server-side calculation |
+| `data2B` | Salt remaining days | Estimate, unverified |
+| `data60` | Signal strength (dBm) | Inference only |
 
 ### 🔬 Regeneration Stages (`data24`)
 
@@ -227,18 +249,20 @@ Body:
 |-------------|--------|
 | `02=1` | Immediate regeneration |
 
+The integration exposes this as a **Button entity** in HA: `button.yi_kou_v80ecm_yi_kou_li_ji_zai_sheng`
+
 Other command codes are unknown — potentially: vacation mode, bypass valve, manual backwash.
 
 ---
 
 ## Credentials & Security
 
-- **`customer_id`** is a **permanent, non-expiring UUID**. Obtain once, use forever.
+- **`openid`** is **permanent** — bound to your WeChat account, never changes. Capture once.
+- **`customer_id`** is a **session token** — expires periodically, but the integration auto-refreshes it using your openid via the `getCustomer` endpoint.
 - **Phone number** is used as the account identifier in API requests.
-- No password or WeChat session is needed after obtaining the `customer_id`.
-- The `ewtoken` header is simply `customer{customer_id}` — no OAuth refresh required.
+- No password or WeChat session is needed after obtaining the openid.
 
-> 🔒 Never commit your `customer_id` or phone number to public repos. The integration uses Home Assistant's config entry system to store these securely.
+> 🔒 Never commit your `openid`, `customer_id`, or phone number to public repos. The integration uses Home Assistant's config entry system to store these securely.
 
 ---
 
@@ -251,8 +275,8 @@ This is a **community reverse-engineering project**. There's still a lot to disc
 - [ ] **Map unknown `dataXX` fields** (see table above)
 - [ ] **Decode config time format** (hex → HH:MM mapping)
 - [ ] **Capture Stage 1 (Backwash)** — need to start Charles before regeneration begins
-- [ ] **Add `switch` platform** — trigger regeneration from HA dashboard
 - [ ] **Add `number` platform** — adjust hardness setting from HA
+- [ ] **Multi-device support** (multiple softeners on one account)
 
 ### 🧪 Medium Priority
 
@@ -260,8 +284,13 @@ This is a **community reverse-engineering project**. There's still a lot to disc
 - [ ] Add `cusDevListByMC3New` endpoint support (may expose more fields)
 - [ ] Unit confirmation: is hardness in ppm or gpg? (170 ppm ≈ 10 gpg)
 - [ ] Fault code mapping (error codes → human-readable descriptions)
-- [ ] Multi-device support (multiple softeners on one account)
 - [ ] Add diagnostic sensors (last regeneration time, next scheduled)
+- [ ] Verify and enable hidden sensor fields against mini-program
+
+### ✅ Completed
+
+- [x] **Button platform** — trigger regeneration from HA dashboard
+- [x] **Auth auto-refresh** — openid-based customer_id renewal
 
 ### 📝 How to Contribute
 
@@ -279,6 +308,7 @@ The original reverse engineering was done with:
 - **iPhone + WeChat** — capturing 怡口智控 mini-program traffic
 - **326 requests captured** in `.chlz` format, including a full regeneration cycle
 - **Field mapping** by comparing API values side-by-side with mini-program screenshots
+- **Auth flow discovery** by analyzing the `openid → getCustomer → ewtoken` chain in Charles session files
 
 ---
 
