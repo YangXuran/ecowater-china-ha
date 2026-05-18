@@ -40,14 +40,20 @@ DATA_FIELDS = {
     # "data60": ("信号强度", "dBm", "mdi:signal"),
 }
 
+SALT_PER_REGEN_DEFAULT = 1.76  # kg — 11L resin × 160g/L
+
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    coordinator = EcowaterDataCoordinator(hass, config_entry)
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
     await coordinator.async_config_entry_first_refresh()
 
     entities = []
     for field, (name, unit, icon) in DATA_FIELDS.items():
         entities.append(EcowaterSensor(coordinator, field, name, unit, icon))
+
+    # Salt tracking sensors
+    entities.append(SaltRemainingSensor(coordinator))
+    entities.append(SaltConsumptionSensor(coordinator))
 
     async_add_entities(entities)
 
@@ -57,12 +63,19 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
 
     def __init__(self, hass, config_entry):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=SCAN_INTERVAL)
+        self._config_entry = config_entry
         self.phone = config_entry.data.get(CONF_PHONE_NUMBER)
         self.customer_id = config_entry.data.get(CONF_CUSTOMER_ID)
         self.openid = config_entry.data.get(CONF_OPENID, "")
         self.device_data = {}
         self.daily_stats = {}
         self._auth_failures = 0
+
+        # Salt tracking state (persisted via config entry options)
+        opts = dict(config_entry.options)
+        self.salt_last_refill_data25 = opts.get("salt_last_refill_data25", 58)
+        self.salt_per_regen = opts.get("salt_per_regen", SALT_PER_REGEN_DEFAULT)
+        self.salt_refill_amount = opts.get("salt_refill_amount", 20.0)
 
     async def _async_update_data(self):
         headers = {
@@ -72,7 +85,6 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
         }
 
         async with aiohttp.ClientSession() as session:
-            # Fetch device data
             try:
                 async with async_timeout.timeout(10):
                     async with session.post(
@@ -86,14 +98,12 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
                                 self.device_data = data["data"][0]
                                 self._auth_failures = 0
                             elif data.get("resCode") == "30001":
-                                # Auth expired — try to refresh via openid
                                 self._auth_failures += 1
                                 _LOGGER.warning(
                                     "Ecowater auth expired (failure #%d), trying refresh",
                                     self._auth_failures,
                                 )
                                 if self.openid and await self._try_refresh_customer_id(session):
-                                    # Retry with new customer_id
                                     headers["ewtoken"] = f"customer{self.customer_id}"
                                     async with async_timeout.timeout(10):
                                         async with session.post(
@@ -105,11 +115,10 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
                                                 data2 = await resp2.json()
                                                 if data2.get("data") and len(data2["data"]) > 0:
                                                     self.device_data = data2["data"][0]
-                                                    _LOGGER.info("Ecowater auth refreshed successfully")
+                                                    _LOGGER.info("Ecowater auth refreshed")
             except Exception as e:
                 _LOGGER.error("Failed to fetch device data: %s", e)
 
-            # Fetch daily stats
             today = datetime.now().strftime("%Y-%m-%d")
             try:
                 async with async_timeout.timeout(10):
@@ -127,7 +136,6 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
         return self.device_data
 
     async def _try_refresh_customer_id(self, session) -> bool:
-        """Try to get a new customer_id using the stable openid."""
         try:
             async with async_timeout.timeout(10):
                 async with session.post(
@@ -145,6 +153,57 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error("Failed to refresh customer_id: %s", e)
         return False
+
+    # ---- Salt tracking ----
+
+    @property
+    def salt_remaining(self) -> float | None:
+        """Estimated remaining salt in kg."""
+        if self.salt_last_refill_data25 is None:
+            return None
+        try:
+            data25 = int(self.device_data.get("data25", 0))
+        except (ValueError, TypeError):
+            return None
+        used = self.salt_per_regen * (data25 - self.salt_last_refill_data25)
+        return round(max(0.0, self.salt_refill_amount - used), 1)
+
+    async def mark_salt_refill(self) -> None:
+        """Mark a salt refill. Auto-calibrates salt_per_regen."""
+        try:
+            data25 = int(self.device_data.get("data25", 0))
+        except (ValueError, TypeError):
+            _LOGGER.warning("Cannot mark refill: data25 unavailable")
+            return
+
+        # Auto-calibrate on consecutive refills
+        if (
+            self.salt_last_refill_data25 is not None
+            and data25 > self.salt_last_refill_data25
+        ):
+            regens = data25 - self.salt_last_refill_data25
+            if regens > 0:
+                calibrated = self.salt_refill_amount / regens
+                if 0.5 <= calibrated <= 8.0:  # sanity check
+                    self.salt_per_regen = round(calibrated, 3)
+                    _LOGGER.info(
+                        "Salt calibrated: %.3f kg/regen (%d regenerations for %.0f kg)",
+                        self.salt_per_regen, regens, self.salt_refill_amount,
+                    )
+
+        self.salt_last_refill_data25 = data25
+        await self._save_salt_state()
+        self.async_update_listeners()
+
+    async def _save_salt_state(self) -> None:
+        """Persist salt calibration data to config entry options."""
+        options = dict(self._config_entry.options)
+        options["salt_last_refill_data25"] = self.salt_last_refill_data25
+        options["salt_per_regen"] = self.salt_per_regen
+        options["salt_refill_amount"] = self.salt_refill_amount
+        self.hass.config_entries.async_update_entry(
+            self._config_entry, options=options
+        )
 
 
 class EcowaterSensor(CoordinatorEntity, SensorEntity):
@@ -170,7 +229,6 @@ class EcowaterSensor(CoordinatorEntity, SensorEntity):
             val = self.coordinator.device_data.get(self._field)
             if val is not None:
                 v = float(val) if isinstance(val, (int, float)) else val
-                # data5A stores hardness × 0.1; display value = raw × 10
                 if self._field == "data5A" and isinstance(v, (int, float)):
                     return v * 10
                 return v
@@ -183,3 +241,60 @@ class EcowaterSensor(CoordinatorEntity, SensorEntity):
             attrs["今日用水"] = self.coordinator.daily_stats.get("softTotal", 0)
             attrs["今日平均"] = self.coordinator.daily_stats.get("ownAverage", 0)
         return attrs
+
+
+class SaltRemainingSensor(CoordinatorEntity, SensorEntity):
+    """Estimated remaining salt in brine tank."""
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_name = "怡口 剩余盐量"
+        self._attr_unique_id = "ecowater_salt_remaining"
+        self._attr_native_unit_of_measurement = "kg"
+        self._attr_icon = "mdi:grain"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.phone)},
+            "name": "怡口 V80ECM",
+            "manufacturer": "Ecowater",
+            "model": "V80ECM",
+        }
+
+    @property
+    def native_value(self):
+        return self.coordinator.salt_remaining
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "上次加盐时再生次数": self.coordinator.salt_last_refill_data25,
+            "每次再生耗盐": f"{self.coordinator.salt_per_regen} kg",
+            "加盐量": f"{self.coordinator.salt_refill_amount} kg",
+        }
+
+
+class SaltConsumptionSensor(CoordinatorEntity, SensorEntity):
+    """Calibrated salt consumption per regeneration."""
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_name = "怡口 每次再生耗盐"
+        self._attr_unique_id = "ecowater_salt_per_regen"
+        self._attr_native_unit_of_measurement = "kg"
+        self._attr_icon = "mdi:chart-bell-curve"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.phone)},
+            "name": "怡口 V80ECM",
+            "manufacturer": "Ecowater",
+            "model": "V80ECM",
+        }
+
+    @property
+    def native_value(self):
+        return self.coordinator.salt_per_regen
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "说明": "自动校准值 — 每次标记加盐时根据实际消耗更新",
+            "理论值": f"{SALT_PER_REGEN_DEFAULT} kg (11L树脂×160g/L)",
+        }

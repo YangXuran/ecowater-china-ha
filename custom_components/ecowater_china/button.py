@@ -1,4 +1,4 @@
-"""Button platform for Ecowater China — trigger regeneration."""
+"""Button platform for Ecowater China — trigger regeneration & salt refill."""
 import logging
 import aiohttp
 import async_timeout
@@ -18,9 +18,14 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
     customer_id = config_entry.data["customer_id"]
     mac = config_entry.data.get("device_mac", "YOUR_DEVICE_MAC")
-    async_add_entities([EcowaterRegenButton(customer_id, mac)])
+
+    async_add_entities([
+        EcowaterRegenButton(customer_id, mac),
+        EcowaterMarkSaltRefillButton(coordinator),
+    ])
 
 
 class EcowaterRegenButton(ButtonEntity):
@@ -61,3 +66,23 @@ class EcowaterRegenButton(ButtonEntity):
                         _LOGGER.error(
                             "Regeneration trigger failed (%d): %s", resp.status, text
                         )
+
+
+class EcowaterMarkSaltRefillButton(ButtonEntity):
+    """Button to mark a salt refill — records current data25 as baseline
+    and auto-calibrates salt_per_regen from previous cycle."""
+
+    def __init__(self, coordinator) -> None:
+        self.coordinator = coordinator
+        self._attr_name = "怡口 标记加盐"
+        self._attr_unique_id = "ecowater_mark_salt_refill"
+        self._attr_icon = "mdi:plus-circle"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.phone)},
+            "name": "怡口 V80ECM",
+            "manufacturer": "Ecowater",
+            "model": "V80ECM",
+        }
+
+    async def async_press(self) -> None:
+        await self.coordinator.mark_salt_refill()
