@@ -15,7 +15,7 @@ class EcowaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             return self.async_create_entry(
-                title="怡口 V80ECM",
+                title="Ecowater V80ECM",
                 data=user_input,
             )
 
@@ -25,7 +25,6 @@ class EcowaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PHONE_NUMBER): str,
                 vol.Required(CONF_OPENID): str,
                 vol.Optional(CONF_CUSTOMER_ID, default=""): str,
-                vol.Optional("device_mac", default=""): str,
             }),
             errors=errors,
         )

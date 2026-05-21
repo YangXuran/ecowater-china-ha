@@ -28,12 +28,14 @@ class SaltLowAlert(BinarySensorEntity):
     def __init__(self, coordinator) -> None:
         self.coordinator = coordinator
         self._attr_name = "怡口 低盐告警"
-        self._attr_unique_id = "ecowater_salt_low"
+        self._attr_unique_id = "ecowater_low_salt_alert"
+        self._attr_has_entity_name = True
+        self.entity_id = "binary_sensor.ecowater_v80ecm_low_salt_alert"
         self._attr_device_class = "problem"
         self._attr_icon = "mdi:alert"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.phone)},
-            "name": "怡口 V80ECM",
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }

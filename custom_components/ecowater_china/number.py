@@ -26,7 +26,9 @@ class EcowaterRefillAmount(NumberEntity):
     def __init__(self, coordinator) -> None:
         self.coordinator = coordinator
         self._attr_name = "怡口 加盐量"
-        self._attr_unique_id = "ecowater_salt_refill_amount"
+        self._attr_unique_id = "ecowater_salt_refill_amt"
+        self._attr_has_entity_name = True
+        self.entity_id = "number.ecowater_v80ecm_salt_refill_amt"
         self._attr_native_min_value = 1.0
         self._attr_native_max_value = 100.0
         self._attr_native_step = 1.0
@@ -34,7 +36,7 @@ class EcowaterRefillAmount(NumberEntity):
         self._attr_icon = "mdi:scale"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.phone)},
-            "name": "怡口 V80ECM",
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }

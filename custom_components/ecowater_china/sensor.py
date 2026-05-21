@@ -19,16 +19,16 @@ SCAN_INTERVAL = timedelta(minutes=5)
 # Fully confirmed mappings from Charles + mini program cross-reference
 DATA_FIELDS = {
     # --- 小程序直接显示 ---
-    "data0A": ("即时流量", "L/min", "mdi:water"),
-    "data25": ("再生次数", "次", "mdi:counter"),
-    "data2C": ("可用软水量", "L", "mdi:water-check"),
+    "data26": ("Flow Rate", "L/min", "mdi:water"),
+    "data25": ("Regen Count", "times", "mdi:counter"),
+    "data2C": ("Soft Water Avail", "L", "mdi:water-check"),
     # --- 再生周期追踪 ---
-    "data08": ("再生进行中", None, "mdi:sync"),
-    "data24": ("再生阶段", None, "mdi:swap-horizontal"),
-    "data22": ("本段用水", "L", "mdi:water-plus"),
-    "data23": ("本段计数", None, "mdi:numeric"),
+    "data08": ("Regen Active", None, "mdi:sync"),
+    "data24": ("Regen Stage", None, "mdi:swap-horizontal"),
+    "data22": ("Cycle Water", "L", "mdi:water-plus"),
+    "data23": ("Cycle Count", None, "mdi:numeric"),
     # --- 累计/历史 ---
-    "data28": ("累计用水量", "L", "mdi:water-pump"),
+    "data28": ("Total Water", "L", "mdi:water-pump"),
     # 以下字段为推测/未确认，暂时隐藏：
     # "data29": ("日均用水", "L", "mdi:water-percent"),
     # "data13": ("总用水量", "L", "mdi:counter"),
@@ -36,12 +36,11 @@ DATA_FIELDS = {
     # "data00": ("设备状态", None, "mdi:information"),
     # "data0F": ("在线", None, "mdi:wifi"),
     # "data2B": ("盐量剩余天数", "天", "mdi:calendar-clock"),
-    "data5A": ("进水硬度", None, "mdi:water-opacity"),
+    "data5A": ("Hardness", None, "mdi:water-opacity"),
     # "data60": ("信号强度", "dBm", "mdi:signal"),
 }
 
 SALT_PER_REGEN_DEFAULT = 1.76  # kg — 11L resin × 160g/L
-
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
@@ -56,7 +55,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     entities.append(SaltConsumptionSensor(coordinator))
 
     async_add_entities(entities)
-
 
 class EcowaterDataCoordinator(DataUpdateCoordinator):
     """Fetch data from Ecowater API."""
@@ -205,6 +203,17 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
             self._config_entry, options=options
         )
 
+_FIELD_CN = {
+    "data26": "怡口 即时流量",
+    "data25": "怡口 再生次数",
+    "data2C": "怡口 可用软水量",
+    "data08": "怡口 再生进行中",
+    "data24": "怡口 再生阶段",
+    "data22": "怡口 本段用水",
+    "data23": "怡口 本段计数",
+    "data28": "怡口 累计用水量",
+    "data5A": "怡口 进水硬度"
+}
 
 class EcowaterSensor(CoordinatorEntity, SensorEntity):
     """Ecowater sensor."""
@@ -212,13 +221,16 @@ class EcowaterSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, field, name, unit, icon):
         super().__init__(coordinator)
         self._field = field
-        self._attr_name = f"怡口 {name}"
-        self._attr_unique_id = f"ecowater_{field}"
+        self._attr_has_entity_name = True
+        en_slug = name.lower().replace(' ', '_')
+        self._attr_unique_id = f"ecowater_{en_slug}"
+        self._attr_name = _FIELD_CN.get(self._field, name)
+        self.entity_id = f"sensor.ecowater_v80ecm_{en_slug}"
         self._attr_native_unit_of_measurement = unit
         self._attr_icon = icon
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.phone)},
-            "name": "怡口 V80ECM",
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }
@@ -229,7 +241,9 @@ class EcowaterSensor(CoordinatorEntity, SensorEntity):
             val = self.coordinator.device_data.get(self._field)
             if val is not None:
                 v = float(val) if isinstance(val, (int, float)) else val
-                if self._field == "data5A" and isinstance(v, (int, float)):
+                if self._field == "data26" and isinstance(v, (int, float)):
+                    return v / 10
+                elif self._field == "data5A" and isinstance(v, (int, float)):
                     return v * 10
                 return v
         return None
@@ -242,19 +256,20 @@ class EcowaterSensor(CoordinatorEntity, SensorEntity):
             attrs["今日平均"] = self.coordinator.daily_stats.get("ownAverage", 0)
         return attrs
 
-
 class SaltRemainingSensor(CoordinatorEntity, SensorEntity):
     """Estimated remaining salt in brine tank."""
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._attr_name = "怡口 剩余盐量"
+        self.entity_id = "sensor.ecowater_v80ecm_salt_remaining"
         self._attr_unique_id = "ecowater_salt_remaining"
         self._attr_native_unit_of_measurement = "kg"
         self._attr_icon = "mdi:grain"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.phone)},
-            "name": "怡口 V80ECM",
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }
@@ -271,19 +286,20 @@ class SaltRemainingSensor(CoordinatorEntity, SensorEntity):
             "加盐量": f"{self.coordinator.salt_refill_amount} kg",
         }
 
-
 class SaltConsumptionSensor(CoordinatorEntity, SensorEntity):
     """Calibrated salt consumption per regeneration."""
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._attr_name = "怡口 每次再生耗盐"
+        self.entity_id = "sensor.ecowater_v80ecm_salt_per_regen"
         self._attr_unique_id = "ecowater_salt_per_regen"
         self._attr_native_unit_of_measurement = "kg"
         self._attr_icon = "mdi:chart-bell-curve"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.phone)},
-            "name": "怡口 V80ECM",
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }

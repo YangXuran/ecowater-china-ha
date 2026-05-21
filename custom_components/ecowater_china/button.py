@@ -23,7 +23,7 @@ async def async_setup_entry(
     mac = config_entry.data.get("device_mac", "YOUR_DEVICE_MAC")
 
     async_add_entities([
-        EcowaterRegenButton(customer_id, mac),
+        EcowaterRegenButton(coordinator, customer_id, mac),
         EcowaterMarkSaltRefillButton(coordinator),
     ])
 
@@ -31,15 +31,16 @@ async def async_setup_entry(
 class EcowaterRegenButton(ButtonEntity):
     """Button to trigger immediate regeneration."""
 
-    def __init__(self, customer_id: str, mac: str) -> None:
+    def __init__(self, coordinator, customer_id: str, mac: str) -> None:
+        self.coordinator = coordinator
         self._customer_id = customer_id
         self._mac = mac
         self._attr_name = "怡口 立即再生"
         self._attr_unique_id = "ecowater_regen"
         self._attr_icon = "mdi:refresh-auto"
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, customer_id)},
-            "name": "怡口 V80ECM",
+            "identifiers": {(DOMAIN, coordinator.phone)},
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }
@@ -79,7 +80,7 @@ class EcowaterMarkSaltRefillButton(ButtonEntity):
         self._attr_icon = "mdi:plus-circle"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.phone)},
-            "name": "怡口 V80ECM",
+            "name": "Ecowater V80ECM",
             "manufacturer": "Ecowater",
             "model": "V80ECM",
         }
