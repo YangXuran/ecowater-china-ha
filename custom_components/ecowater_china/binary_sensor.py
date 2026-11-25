@@ -5,6 +5,7 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 
@@ -22,11 +23,15 @@ async def async_setup_entry(
     async_add_entities([SaltLowAlert(coordinator)])
 
 
-class SaltLowAlert(BinarySensorEntity):
-    """Binary sensor that triggers when salt is low."""
+class SaltLowAlert(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor that triggers when salt is low.
+
+    必须是 CoordinatorEntity：否则 coordinator 每 5 分钟刷新时它收不到通知，
+    状态和属性会停在第一次渲染那一刻（表现为剩余盐量恒为启动时的错值）。
+    """
 
     def __init__(self, coordinator) -> None:
-        self.coordinator = coordinator
+        super().__init__(coordinator)   # 必须调用，否则不会注册 coordinator 监听
         self._attr_name = "怡口 低盐告警"
         self._attr_unique_id = "ecowater_low_salt_alert"
         self._attr_has_entity_name = True

@@ -19,7 +19,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
     from .sensor import EcowaterDataCoordinator
-    hass.data[DOMAIN][entry.entry_id] = EcowaterDataCoordinator(hass, entry)
+    coordinator = EcowaterDataCoordinator(hass, entry)
+    # 必须在这里首次拉取，再交给平台。
+    # 若放在 sensor.py 里，平台是并发加载的，binary_sensor 可能先建好，
+    # 此时 coordinator.device_data 还是空的，data25 读成 0，
+    # 剩余盐量会被算成 20 - 1.6 × (0 - 88) = +160.8 这种荒谬值。
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN][entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

@@ -49,7 +49,7 @@ SALT_PER_REGEN_MAX = 2.6
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
-    await coordinator.async_config_entry_first_refresh()
+    # 首次拉取已在 __init__.py 完成，这里不再重复（否则会与平台并发加载竞争）
 
     entities = []
     for field, (name, unit, icon) in DATA_FIELDS.items():
@@ -168,6 +168,10 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
             data25 = int(self.device_data.get("data25", 0))
         except (ValueError, TypeError):
             return 0.0
+        # data25 尚未取到（HA 刚启动时 device_data 为空）或计数器被重置
+        # → 公式会算出荒谬值（例如 20 - 1.6 × (0 - 88) = +160.8），必须挡住
+        if data25 <= 0 or data25 < self.salt_last_refill_data25:
+            return 0.0
         used = self.salt_per_regen * (data25 - self.salt_last_refill_data25)
         return round(max(0.0, used - self.salt_refill_amount), 2)
 
@@ -179,6 +183,10 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
         try:
             data25 = int(self.device_data.get("data25", 0))
         except (ValueError, TypeError):
+            return None
+        # 同 salt_overdrawn：data25 无效时返回 None（HA 会显示 unknown），
+        # 而不是算出一个虚高的剩余量骗人
+        if data25 <= 0 or data25 < self.salt_last_refill_data25:
             return None
         used = self.salt_per_regen * (data25 - self.salt_last_refill_data25)
         return round(max(0.0, self.salt_refill_amount - used), 1)
