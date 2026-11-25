@@ -40,12 +40,12 @@ DATA_FIELDS = {
     # "data60": ("信号强度", "dBm", "mdi:signal"),
 }
 
-SALT_PER_REGEN_DEFAULT = 1.6  # kg — 10L resin × 160g/L (V80ECM 规格：树脂含量 10L)
+SALT_PER_REGEN_DEFAULT = 1.76  # kg — 11L resin × 160g/L（V80ECM 官方手册：树脂含量 11L）
 
-# 物理合理区间：10L 树脂 × 80~260 g/L
+# 物理合理区间：11L 树脂 × 80~260 g/L
 # 低于下限（逆流再生）说明校准基线有误，不能采信；高于上限同理。
-SALT_PER_REGEN_MIN = 0.8
-SALT_PER_REGEN_MAX = 2.6
+SALT_PER_REGEN_MIN = 0.88
+SALT_PER_REGEN_MAX = 2.86
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
@@ -169,7 +169,7 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
         except (ValueError, TypeError):
             return 0.0
         # data25 尚未取到（HA 刚启动时 device_data 为空）或计数器被重置
-        # → 公式会算出荒谬值（例如 20 - 1.6 × (0 - 88) = +160.8），必须挡住
+        # → 公式会算出荒谬值（例如 20 - 1.76 × (0 - 88) = +174.9），必须挡住
         if data25 <= 0 or data25 < self.salt_last_refill_data25:
             return 0.0
         used = self.salt_per_regen * (data25 - self.salt_last_refill_data25)
@@ -351,6 +351,6 @@ class SaltConsumptionSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self):
         return {
             "说明": "自动校准值 — 每次标记加盐时根据实际消耗更新",
-            "理论值": f"{SALT_PER_REGEN_DEFAULT} kg (10L树脂×160g/L)",
-            "物理区间": f"{SALT_PER_REGEN_MIN} ~ {SALT_PER_REGEN_MAX} kg (10L树脂×80~260g/L)",
+            "理论值": f"{SALT_PER_REGEN_DEFAULT} kg (11L树脂×160g/L)",
+            "物理区间": f"{SALT_PER_REGEN_MIN} ~ {SALT_PER_REGEN_MAX} kg (11L树脂×80~260g/L)",
         }
