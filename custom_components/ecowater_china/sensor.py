@@ -40,7 +40,12 @@ DATA_FIELDS = {
     # "data60": ("信号强度", "dBm", "mdi:signal"),
 }
 
-SALT_PER_REGEN_DEFAULT = 1.76  # kg — 11L resin × 160g/L
+SALT_PER_REGEN_DEFAULT = 1.6  # kg — 10L resin × 160g/L (V80ECM 规格：树脂含量 10L)
+
+# 物理合理区间：10L 树脂 × 80~260 g/L
+# 低于下限（逆流再生）说明校准基线有误，不能采信；高于上限同理。
+SALT_PER_REGEN_MIN = 0.8
+SALT_PER_REGEN_MAX = 2.6
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
@@ -155,6 +160,18 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
     # ---- Salt tracking ----
 
     @property
+    def salt_overdrawn(self) -> float:
+        """已超支的盐量（kg）。剩余量被钳到 0 后，这个值告诉你已经空了多久。"""
+        if self.salt_last_refill_data25 is None:
+            return 0.0
+        try:
+            data25 = int(self.device_data.get("data25", 0))
+        except (ValueError, TypeError):
+            return 0.0
+        used = self.salt_per_regen * (data25 - self.salt_last_refill_data25)
+        return round(max(0.0, used - self.salt_refill_amount), 2)
+
+    @property
     def salt_remaining(self) -> float | None:
         """Estimated remaining salt in kg."""
         if self.salt_last_refill_data25 is None:
@@ -182,14 +199,23 @@ class EcowaterDataCoordinator(DataUpdateCoordinator):
             regens = data25 - self.salt_last_refill_data25
             if regens > 0:
                 calibrated = self.salt_refill_amount / regens
-                if 0.5 <= calibrated <= 8.0:  # sanity check
+                if SALT_PER_REGEN_MIN <= calibrated <= SALT_PER_REGEN_MAX:
                     self.salt_per_regen = round(calibrated, 3)
                     _LOGGER.info(
                         "Salt calibrated: %.3f kg/regen (%d regenerations for %.0f kg)",
                         self.salt_per_regen, regens, self.salt_refill_amount,
                     )
+                else:
+                    _LOGGER.warning(
+                        "Salt calibration rejected: %.3f kg/regen out of physical range "
+                        "[%.1f, %.1f] (%d regenerations for %.0f kg). "
+                        "基线可能不是真实加盐记录，保持 %.3f kg/regen",
+                        calibrated, SALT_PER_REGEN_MIN, SALT_PER_REGEN_MAX,
+                        regens, self.salt_refill_amount, self.salt_per_regen,
+                    )
 
         self.salt_last_refill_data25 = data25
+        self.salt_refill_amount = float(self.salt_refill_amount)
         await self._save_salt_state()
         self.async_update_listeners()
 
@@ -280,10 +306,15 @@ class SaltRemainingSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        remain = self.coordinator.salt_remaining
+        per = self.coordinator.salt_per_regen
+        regens_left = round(remain / per, 1) if (remain is not None and per) else None
         return {
             "上次加盐时再生次数": self.coordinator.salt_last_refill_data25,
             "每次再生耗盐": f"{self.coordinator.salt_per_regen} kg",
             "加盐量": f"{self.coordinator.salt_refill_amount} kg",
+            "超支量": f"{self.coordinator.salt_overdrawn} kg",
+            "预计剩余再生次数": regens_left,
         }
 
 class SaltConsumptionSensor(CoordinatorEntity, SensorEntity):
@@ -312,5 +343,6 @@ class SaltConsumptionSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self):
         return {
             "说明": "自动校准值 — 每次标记加盐时根据实际消耗更新",
-            "理论值": f"{SALT_PER_REGEN_DEFAULT} kg (11L树脂×160g/L)",
+            "理论值": f"{SALT_PER_REGEN_DEFAULT} kg (10L树脂×160g/L)",
+            "物理区间": f"{SALT_PER_REGEN_MIN} ~ {SALT_PER_REGEN_MAX} kg (10L树脂×80~260g/L)",
         }
